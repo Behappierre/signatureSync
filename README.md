@@ -1,313 +1,183 @@
 # SignatureSync
 
-An AI-powered email signature extractor that automatically processes email signatures and saves contact information to Google Sheets.
+Paste an email signature, check what comes out, and append it to a Google Sheet.
 
-## 🚀 Project Status
+The whole thing is a static site plus one serverless function. There is no
+database, no server to run and nothing to keep alive. It deploys to Netlify
+from a single `git push`.
 
-**Current Phase:** Infrastructure Complete ✅  
-**Next Phase:** Core Feature Implementation 🔄
-
-### ✅ Completed Infrastructure
-- [x] Complete project structure with TypeScript
-- [x] Frontend: React 18 + Vite + Material-UI v5 setup
-- [x] Backend: Fastify + Prisma + PostgreSQL setup  
-- [x] Docker development environment
-- [x] Environment validation with Zod
-- [x] Security measures (input sanitization, rate limiting, CORS)
-- [x] Database schema with Prisma
-- [x] API route structure with OpenAPI documentation
-- [x] Testing framework setup
-
-### 🔄 In Progress
-- Material Design 3 theme implementation
-- React component development
-- Authentication system (Google OAuth 2.0)
-- OpenAI integration service
-- Google Sheets API integration
-
-### 📋 Upcoming
-- Core React components (SignatureInput, ContactDisplay)
-- State management with Zustand
-- API client services
-- Comprehensive testing suite
-- Production deployment configuration
-
-## ✨ Key Features
-
-- **🤖 AI-Powered Extraction**: Uses OpenAI GPT-4 to extract contact information from email signatures with 95%+ accuracy
-- **📊 Google Sheets Integration**: Seamlessly save extracted contacts to Google Sheets with automatic column mapping
-- **🎨 Material Design 3**: Modern, accessible UI following Google's latest design principles
-- **🔒 Enterprise Security**: Comprehensive input sanitization, rate limiting, and secure authentication
-- **⚡ High Performance**: Sub-3-second processing with optimized bundle sizes
-- **🧪 TypeScript First**: Full type safety across frontend, backend, and shared utilities
-
-## 🛠 Tech Stack
-
-### Frontend
-- **React 18+** with TypeScript
-- **Material-UI v5** (Material Design 3 implementation)
-- **Zustand** for state management
-- **Vite** for lightning-fast development
-- **Vitest + React Testing Library** for testing
-
-### Backend  
-- **Node.js 20+** with Fastify framework
-- **TypeScript** with strict configuration
-- **Prisma ORM** with PostgreSQL
-- **OpenAI API** for signature processing
-- **Google APIs** (Sheets + OAuth 2.0)
-
-### DevOps & Security
-- **Docker** for containerized development
-- **Zod** for schema validation
-- **Comprehensive security** (XSS prevention, rate limiting, CORS)
-- **Structured logging** with correlation IDs
-
-## 📁 Project Architecture
+## How it works
 
 ```
-signatureSync/
-├── frontend/                    # React + TypeScript frontend
-│   ├── src/
-│   │   ├── components/         # React components with Material-UI
-│   │   ├── pages/             # Route components
-│   │   ├── hooks/             # Custom React hooks
-│   │   ├── store/             # Zustand state management
-│   │   ├── types/             # TypeScript type definitions
-│   │   ├── utils/             # Utility functions
-│   │   ├── services/          # API service layers
-│   │   └── theme/             # Material Design 3 theme
-│   ├── vitest.config.ts       # Testing configuration
-│   └── vite.config.ts         # Build configuration
-├── backend/                     # Fastify + TypeScript API
-│   ├── src/
-│   │   ├── server/
-│   │   │   ├── routes/        # API routes with OpenAPI docs
-│   │   │   ├── services/      # Business logic services
-│   │   │   ├── plugins/       # Fastify plugins
-│   │   │   └── types/         # Backend type definitions
-│   │   ├── config/            # Environment & configuration
-│   │   └── utils/             # Security & utility functions
-│   ├── prisma/                # Database schema & migrations
-│   └── Dockerfile             # Production container
-├── shared/                      # Shared types and utilities
-│   ├── types/                 # Common TypeScript interfaces
-│   └── utils/                 # Shared validation & utilities
-├── docker-compose.yml          # Development environment
-├── docker-compose.prod.yml     # Production deployment
-└── README.md                  # Project documentation
+Browser (React)                                  Netlify Function
+  |                                                    |
+  |-- parse the signature locally (regex) ------------ |
+  |-- POST /api/extract  ---------------------------->  holds the model API key
+  |     (with the user's Google access token)           calls the model
+  |<-- structured fields ------------------------------ returns JSON, stores nothing
+  |
+  |-- Google Sheets API v4, direct from the browser --> your spreadsheet
+        (user's own OAuth token, no server involved)
 ```
 
-## 🚀 Quick Start
+Three deliberate choices follow from wanting no backend:
 
-### Prerequisites
+**Google auth happens in the browser.** The Google Identity Services token
+client issues an access token straight to the page. There is no client secret,
+no refresh token, no JWT and no session store, so there is nothing for a server
+to hold.
 
-- **Node.js 20+**
-- **PostgreSQL** (or use Docker)
-- **Google Cloud Project** with OAuth 2.0 credentials
-- **OpenAI API key**
+**The spreadsheet is the database.** Contacts are appended as rows and matched
+to whatever column headings the sheet already uses. Nothing is duplicated
+anywhere else. The only local state is a list of which sheets you have
+connected, kept in your own browser.
 
-### Development Setup
+**Extraction degrades rather than fails.** A regex parser runs first, in the
+browser, and recovers email, phone, URLs and LinkedIn reliably on its own. The
+model pass then improves name, title, company and address. If no API key is
+configured, or the function is unreachable, the app keeps working on the parser
+alone and says so.
 
-1. **Clone and setup environment:**
-   ```bash
-   git clone <repository-url>
-   cd signatureSync
-   cp .env.example .env
-   # Edit .env with your API keys and credentials
-   ```
+## Why there is one function at all
 
-2. **Start with Docker (recommended):**
-   ```bash
-   docker-compose up
-   ```
-   
-3. **Or setup manually:**
-   ```bash
-   # Install dependencies
-   npm install
-   cd frontend && npm install
-   cd ../backend && npm install
-   
-   # Setup database
-   cd backend && npx prisma migrate dev
-   npx prisma db seed
-   
-   # Start services
-   npm run dev # Runs both frontend and backend
-   ```
+A model API key cannot be shipped to a browser: anyone could read it out of the
+bundle and spend it. The single `extract` function exists only to hold that key.
 
-4. **Access the application:**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:3001
-   - API Documentation: http://localhost:3001/docs
+It is not open to the public. Every request must carry a Google access token
+issued to this app's own OAuth client, which the function verifies with Google
+before calling anything. `ALLOWED_EMAILS` narrows that to named accounts if you
+want the deployment private to you.
 
-### Available Commands
+## Setup
 
-**Root Level:**
-```bash
-npm run dev          # Start both frontend and backend
-npm run build        # Build all packages
-npm run test         # Run all tests
-npm run lint         # Lint all packages
-npm run clean        # Clean all build artifacts
-```
+### 1. Google Cloud
 
-**Frontend:**
-```bash
-cd frontend
-npm run dev          # Start development server with HMR
-npm run build        # Production build with Vite
-npm run preview      # Preview production build
-npm run test         # Run component tests with Vitest
-npm run test:ui      # Run tests with UI
-npm run lint         # ESLint with TypeScript rules
-```
+In the [Google Cloud Console](https://console.cloud.google.com/), create a
+project and then:
 
-**Backend:**
-```bash
-cd backend
-npm run dev          # Start API server with auto-reload
-npm run build        # Compile TypeScript to JavaScript
-npm run start        # Start production server
-npm run test         # Run integration tests
-npm run lint         # ESLint for backend code
-npx prisma studio    # Open Prisma database admin
-npx prisma migrate dev # Run database migrations
-```
+1. **Enable APIs** (APIs and services, Library): Google Sheets API, Google
+   Drive API, Google Picker API.
+2. **Configure the OAuth consent screen.** Add the scopes
+   `auth/drive.file`, `auth/userinfo.email` and `auth/userinfo.profile`.
+   All three are non-restricted, so no Google security assessment is required.
+   While the app is in Testing, add yourself under Test users.
+3. **Create an OAuth 2.0 Client ID** of type *Web application*. Under
+   *Authorised JavaScript origins* add `http://localhost:3000` and your
+   deployed origin, for example `https://signaturesync.netlify.app`. No redirect
+   URI is needed: the token client does not use one.
+4. **Create an API key** and restrict it to the Picker API and to your site.
+   This is only needed for choosing an existing sheet from Drive.
 
-## 🔧 Configuration
+> **On scopes.** `drive.file` grants access only to files you create in this app
+> or open through the Picker. That is why the app cannot simply take a pasted
+> spreadsheet ID, and also why it needs no verification review. If you would
+> rather paste IDs, set `VITE_GOOGLE_SCOPES` to use
+> `https://www.googleapis.com/auth/spreadsheets` instead, and accept that
+> Google will require verification before anyone outside your test users can
+> sign in.
 
-### Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-```env
-# Required
-DATABASE_URL="postgresql://user:password@localhost:5432/signatureSync"
-GOOGLE_CLIENT_ID="your-google-oauth-client-id"
-GOOGLE_CLIENT_SECRET="your-google-oauth-client-secret"
-OPENAI_API_KEY="your-openai-api-key"
-JWT_SECRET="your-secure-jwt-secret-32-chars-minimum"
-
-# Optional
-REDIS_URL="redis://localhost:6379"
-LOG_LEVEL="info"
-RATE_LIMIT_MAX="100"
-```
-
-### Security Configuration
-
-The application includes comprehensive security measures:
-- **Input Sanitization**: XSS and injection prevention
-- **Rate Limiting**: Configurable per-user and per-IP limits
-- **CORS**: Strict origin validation
-- **JWT Security**: Secure token generation and validation
-- **Content Security Policy**: Prevents XSS attacks
-
-## 📊 API Endpoints
-
-### Authentication
-- `GET /api/auth/google/login` - Initiate Google OAuth
-- `GET /api/auth/google/callback` - OAuth callback handler
-- `POST /api/auth/refresh` - Refresh JWT token
-- `GET /api/auth/me` - Get current user info
-
-### Signature Processing
-- `POST /api/extract-signature` - Extract contact info from signature
-- `POST /api/validate-signature` - Validate signature format
-- `GET /api/processing-history` - Get user processing history
-
-### Google Sheets
-- `GET /api/sheets` - Get user's Google Sheets
-- `POST /api/sheets/save` - Save contacts to sheet
-- `POST /api/sheets/create` - Create new sheet
-- `GET /api/sheets/:id` - Get sheet metadata
-
-Full API documentation available at `/docs` when running the server.
-
-## 🧪 Testing
-
-The project includes comprehensive testing setup:
-
-- **Unit Tests**: Component and utility function tests
-- **Integration Tests**: API endpoint tests with test database
-- **E2E Tests**: Full user journey testing (planned)
+### 2. Local development
 
 ```bash
-# Run all tests
-npm run test
-
-# Frontend tests only
-cd frontend && npm run test
-
-# Backend tests only  
-cd backend && npm run test
-
-# Run tests with coverage
-npm run test:coverage
+npm install
+cp .env.example .env
+# fill in VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_API_KEY
+npm run dev
 ```
 
-## 🚀 Deployment
+`npm run dev` serves the frontend only, so the AI pass returns nothing and the
+app falls back to local parsing. To run the function too:
 
-### Production Build
 ```bash
-# Build all services
-npm run build
-
-# Or build individually
-cd frontend && npm run build
-cd backend && npm run build
+npm install -g netlify-cli
+netlify dev
 ```
 
-### Docker Production
+### 3. Deploy
+
+Connect the repository to Netlify. The build settings come from `netlify.toml`,
+so there is nothing to configure by hand:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npm run build` |
+| Publish directory | `dist` |
+| Functions directory | `netlify/functions` |
+
+Then set the environment variables on the site (Site configuration,
+Environment variables):
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `VITE_GOOGLE_CLIENT_ID` | yes | OAuth client ID, public |
+| `VITE_GOOGLE_API_KEY` | for the Picker | API key, public, restrict it |
+| `VITE_GOOGLE_APP_ID` | no | Google project number |
+| `ANTHROPIC_API_KEY` | one of the two | secret, used by the function |
+| `OPENAI_API_KEY` | one of the two | secret, used by the function |
+| `GOOGLE_CLIENT_ID` | yes | same value as above, for token verification |
+| `ALLOWED_EMAILS` | no | restrict who can use the AI pass |
+
+`VITE_` variables are compiled into the browser bundle and are public by
+design. Never put an API key in one.
+
+Finally, add the deployed origin to the authorised JavaScript origins on the
+OAuth client, or sign-in will be refused.
+
+## Using an existing sheet
+
+The app adapts to the columns you already have. It reads the header row and
+matches each heading against a list of known spellings, so `Surname`,
+`Last Name` and `last_name` all receive the same value. Headings it does not
+recognise are left alone, and if none of them match it says so rather than
+writing a misaligned row.
+
+A sheet created from within the app gets these columns:
+
+`First name`, `Last name`, `Job title`, `Company`, `Email`, `Phone`,
+`Website`, `LinkedIn`, `Address`, `Date added`
+
+Add a column called `Source` or `Raw signature` and the original pasted text is
+written there too.
+
+## Commands
+
 ```bash
-# Production deployment
-docker-compose -f docker-compose.prod.yml up -d
+npm run dev         # Vite dev server on :3000
+npm run dev:netlify # Vite plus the function, via netlify dev
+npm run build       # typecheck, then production build to dist/
+npm run test        # parser, sheet-mapping and extraction tests
+npm run typecheck   # tsc --noEmit
 ```
 
-### Environment Setup
-Ensure production environment variables are properly configured:
-- Use strong JWT secrets
-- Configure proper CORS origins
-- Set up SSL certificates
-- Configure proper logging levels
+## Project layout
 
-## 📈 Performance Targets
+```
+index.html
+netlify.toml               Build, routing and security headers
+netlify/functions/
+  extract.mts              The only server-side code
+src/
+  App.tsx
+  components/              Header, input, fields, sheet panel, recent saves
+  lib/
+    config.ts              Public build-time configuration
+    google.ts              GIS token client and Picker
+    sheets.ts              Sheets v4 client and column mapping
+    heuristics.ts          Deterministic signature parsing
+    extract.ts             Merges the parser with the AI pass
+    storage.ts             Per-browser convenience state
+  store/useAppStore.ts     Application state
+  theme/                   MUI theme
+test/                      Node test runner suites
+```
 
-- **Signature Processing**: < 3 seconds
-- **Google Sheets Save**: < 2 seconds  
-- **Bundle Size**: < 500KB gzipped
-- **Extraction Accuracy**: > 95% on standard business signatures
-- **Concurrent Users**: 100+ simultaneous users supported
+## Privacy
 
-## 🤝 Contributing
+Signature text goes to the model provider only when the AI pass runs, and to
+Google when you save. This site stores nothing: it has no database and no
+logging of contact data. Extracted contacts live in your spreadsheet, in your
+Google account.
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes following the established patterns
-4. Run tests: `npm run test`
-5. Commit changes: `git commit -m 'Add amazing feature'`
-6. Push to branch: `git push origin feature/amazing-feature`
-7. Open a Pull Request
+## Licence
 
-### Development Guidelines
-- Follow TypeScript strict mode
-- Use Material Design 3 principles for UI
-- Write comprehensive tests for new features
-- Update documentation for API changes
-- Follow security best practices
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🔗 Links
-
-- [Technical Requirements Document](./signature_extractor_trd.md)
-- [Product Requirements Document](./signature_extractor_prd.md)
-- [Claude Code Instructions](./claude_code_instructions.md)
-
----
-
-**Built with ❤️ using TypeScript, React, Fastify, and Material Design 3**
+MIT. See [LICENSE](./LICENSE).
