@@ -48,6 +48,18 @@ issued to this app's own OAuth client, which the function verifies with Google
 before calling anything. `ALLOWED_EMAILS` narrows that to named accounts if you
 want the deployment private to you.
 
+It speaks to OpenRouter, Anthropic or OpenAI, whichever key is set, in that
+order of precedence. OpenRouter is the most flexible of the three: one key
+reaches most models, so changing model later is a change to `OPENROUTER_MODEL`
+and nothing else. Requests to it set `require_parameters: true`, because a
+model on OpenRouter is served by many providers and not all of them honour
+`response_format`; without it a request can be routed to one that ignores the
+schema.
+
+A note on cost: extraction sends roughly 500 input and 100 output tokens per
+signature, so even a mid-priced model costs a small fraction of a penny per
+contact. Choose on the reliability of the JSON it returns rather than on price.
+
 ## Setup
 
 ### 1. Google Cloud
@@ -57,10 +69,11 @@ project and then:
 
 1. **Enable APIs** (APIs and services, Library): Google Sheets API, Google
    Drive API, Google Picker API.
-2. **Configure the OAuth consent screen.** Add the scopes
-   `auth/drive.file`, `auth/userinfo.email` and `auth/userinfo.profile`.
-   All three are non-restricted, so no Google security assessment is required.
-   While the app is in Testing, add yourself under Test users.
+2. **Configure the OAuth consent screen**, under Google Auth Platform. Set the
+   Audience to External, and while the app is in Testing add yourself under
+   Test users. Under Data Access add the scopes `auth/drive.file`,
+   `auth/userinfo.email` and `auth/userinfo.profile`. All three are
+   non-restricted, so no Google security assessment is required.
 3. **Create an OAuth 2.0 Client ID** of type *Web application*. Under
    *Authorised JavaScript origins* add `http://localhost:3000` and your
    deployed origin, for example `https://signaturesync.netlify.app`. No redirect
@@ -112,8 +125,10 @@ Environment variables):
 | `VITE_GOOGLE_CLIENT_ID` | yes | OAuth client ID, public |
 | `VITE_GOOGLE_API_KEY` | for the Picker | API key, public, restrict it |
 | `VITE_GOOGLE_APP_ID` | no | Google project number |
-| `ANTHROPIC_API_KEY` | one of the two | secret, used by the function |
-| `OPENAI_API_KEY` | one of the two | secret, used by the function |
+| `OPENROUTER_API_KEY` | one of the three | secret, used by the function |
+| `ANTHROPIC_API_KEY` | one of the three | secret, used by the function |
+| `OPENAI_API_KEY` | one of the three | secret, used by the function |
+| `OPENROUTER_MODEL` | no | defaults to `deepseek/deepseek-v4-flash-0731` |
 | `GOOGLE_CLIENT_ID` | yes | same value as above, for token verification |
 | `ALLOWED_EMAILS` | no | restrict who can use the AI pass |
 
