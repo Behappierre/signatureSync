@@ -53,8 +53,23 @@ interface AppState {
   notify: (notice: Notice | null) => void;
 }
 
-const messageFrom = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message ? error.message : fallback;
+const messageFrom = (error: unknown, fallback: string): string => {
+  const base = error instanceof Error && error.message ? error.message : fallback;
+
+  // A 403 from Google has three common causes that are indistinguishable from
+  // the message alone: an API not enabled on the project, a consent granted
+  // before a scope was added, and a file this app was never given. Naming the
+  // scopes actually held turns the second one from invisible into obvious.
+  if (error instanceof sheets.SheetsError && error.status === 403) {
+    const scopes = google.grantedScopes().map((scope) => scope.replace(/^.*\/auth\//, ''));
+    const held = scopes.length > 0 ? scopes.join(', ') : 'none';
+    return `${base} (Google granted this session: ${held}. If drive.file is missing, disconnect and reconnect to re-consent.)`;
+  }
+
+  return base;
+};
+
+const DRIVE_FILE_SCOPE = '/auth/drive.file';
 
 export const useAppStore = create<AppState>((set, get) => ({
   token: null,
@@ -97,6 +112,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       const token = await google.connect();
       const user = await google.fetchUser(token).catch(() => null);
       set({ token, user, authStatus: 'done' });
+
+      // Catch a narrow grant now rather than at the first failed write.
+      if (!google.hasScope(DRIVE_FILE_SCOPE)) {
+        set({
+          notice: {
+            message:
+              'Google did not grant access to Drive files, so saving will fail. Check the drive.file scope is on the consent screen, then disconnect and reconnect.',
+            severity: 'warning',
+          },
+        });
+      }
     } catch (error) {
       set({
         authStatus: 'error',

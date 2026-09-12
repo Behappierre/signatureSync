@@ -14,6 +14,8 @@ const RECONNECT_FLAG = 'signaturesync.connected';
 let tokenClient: GoogleTokenClient.Client | null = null;
 let accessToken: string | null = null;
 let expiresAt = 0;
+/** The scopes Google actually granted, which can be fewer than we asked for. */
+let grantedScope = '';
 /** Resolver for the in-flight token request, if any. */
 let pending: { resolve: (token: string) => void; reject: (error: Error) => void } | null = null;
 
@@ -56,6 +58,7 @@ async function ensureTokenClient(): Promise<GoogleTokenClient.Client> {
         pending?.reject(new Error(message));
       } else {
         accessToken = response.access_token;
+        grantedScope = response.scope ?? '';
         // Renew a minute early so a call never goes out on a just-expired token.
         expiresAt = Date.now() + (response.expires_in ?? 3600) * 1000 - 60_000;
         localStorage.setItem(RECONNECT_FLAG, '1');
@@ -117,6 +120,19 @@ export async function getAccessToken(): Promise<string> {
   }
 }
 
+/**
+ * What Google granted, not what we requested. A consent given before a scope
+ * was added to the project stays granted at the old, narrower set, which is a
+ * common and otherwise invisible cause of 403s.
+ */
+export function grantedScopes(): string[] {
+  return grantedScope.split(' ').filter(Boolean);
+}
+
+export function hasScope(suffix: string): boolean {
+  return grantedScopes().some((scope) => scope.endsWith(suffix));
+}
+
 export function currentToken(): string | null {
   return accessToken && Date.now() < expiresAt ? accessToken : null;
 }
@@ -125,6 +141,7 @@ export function disconnect(): void {
   const token = accessToken;
   accessToken = null;
   expiresAt = 0;
+  grantedScope = '';
   localStorage.removeItem(RECONNECT_FLAG);
   if (token) window.google?.accounts?.oauth2.revoke(token);
 }
