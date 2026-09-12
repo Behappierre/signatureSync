@@ -249,7 +249,44 @@ export function headersAreUnrecognised(headers: string[]): boolean {
   return !headers.some((header) => HEADER_LOOKUP.has(normaliseHeader(header)));
 }
 
-/** Append one contact as a new row. Returns the range it landed in. */
+/**
+ * Sheets interprets a leading =, +, - or @ as the start of a formula, so a
+ * phone number written as "+44 7700 900123" evaluates and lands in the cell as
+ * #ERROR!. A leading apostrophe forces the value to be treated as text and is
+ * not itself displayed.
+ */
+function guardFormula(value: string): string {
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
+/**
+ * Find the first row with nothing in it, reading the values rather than
+ * trusting the API's append behaviour.
+ *
+ * values.append searches the given range for a "table" and appends beneath
+ * whatever it finds. On a sheet carrying stray content or formatting it can
+ * latch onto the wrong block and write the row offset both down and across,
+ * which is exactly what it did here. Computing the row and writing to an
+ * explicit range removes that guesswork.
+ */
+async function nextEmptyRow(token: string, sheet: SheetRef, width: number): Promise<number> {
+  const range = `${quoteTab(sheet.tab)}!A:${columnLetter(Math.max(width, 1))}`;
+  const existing = await call<{ values?: string[][] }>(
+    token,
+    `/${sheet.id}/values/${encodeURIComponent(range)}`,
+  );
+
+  const rows = existing.values ?? [];
+  // Trailing rows of blanks should not push the next write down the sheet.
+  let lastUsed = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    if ((rows[i] ?? []).some((cell) => String(cell ?? '').trim().length > 0)) lastUsed = i + 1;
+  }
+
+  return lastUsed + 1;
+}
+
+/** Write one contact as a new row. Returns the range it landed in. */
 export async function appendContact(
   token: string,
   sheet: SheetRef,
@@ -257,16 +294,19 @@ export async function appendContact(
   headers: string[],
   rawSignature = '',
 ): Promise<string> {
-  const row = mapContactToRow(contact, headers, rawSignature);
-  const range = `${quoteTab(sheet.tab)}!A:${columnLetter(Math.max(headers.length, 1))}`;
+  const row = mapContactToRow(contact, headers, rawSignature).map(guardFormula);
+  const width = Math.max(headers.length, row.length, 1);
+  const target = await nextEmptyRow(token, sheet, width);
 
-  const result = await call<{ updates?: { updatedRange?: string } }>(
+  const range = `${quoteTab(sheet.tab)}!A${target}:${columnLetter(width)}${target}`;
+
+  const result = await call<{ updatedRange?: string }>(
     token,
-    `/${sheet.id}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    { method: 'POST', body: JSON.stringify({ values: [row] }) },
+    `/${sheet.id}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    { method: 'PUT', body: JSON.stringify({ values: [row] }) },
   );
 
-  return result.updates?.updatedRange ?? '';
+  return result.updatedRange ?? range;
 }
 
-export const __testing = { columnLetter, quoteTab, normaliseHeader, HEADER_LOOKUP };
+export const __testing = { columnLetter, quoteTab, normaliseHeader, guardFormula, HEADER_LOOKUP };
