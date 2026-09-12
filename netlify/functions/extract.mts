@@ -35,7 +35,7 @@ const SYSTEM_PROMPT = `You extract contact details from email signatures.
 Return a single JSON object with these keys, all optional: firstName, lastName, title, company, email, phone, website, linkedin, address, confidence.
 
 Rules:
-- Only return a value you can see in the signature. Never invent, complete or correct a value. An absent field must be omitted, not guessed.
+- Only return a value you can see in the signature. Never invent, complete or correct a value. An absent field must be omitted or returned as an empty string, never guessed.
 - firstName and lastName are the person's name with honorifics (Mr, Dr) and post-nominal letters (MSc, CEng, MBA) removed.
 - title is the job title exactly as written, including any department after a comma.
 - company is the employer's name, not a department, tagline or address line.
@@ -160,6 +160,74 @@ function extractJson(text: string): unknown {
   }
 }
 
+/**
+ * Strict JSON schema for providers that support structured outputs. Every
+ * field is required because strict mode demands it; absent values come back as
+ * empty strings, which coerceFields drops.
+ */
+const RESPONSE_SCHEMA = {
+  name: 'contact_extraction',
+  strict: true,
+  schema: {
+    type: 'object',
+    properties: {
+      ...Object.fromEntries(FIELDS.map((field) => [field, { type: 'string' }])),
+      confidence: { type: 'number' },
+    },
+    required: [...FIELDS, 'confidence'],
+    additionalProperties: false,
+  },
+};
+
+/**
+ * OpenRouter exposes many models behind one key and an OpenAI-shaped API.
+ *
+ * require_parameters matters here: a model is served by many providers and not
+ * all of them honour response_format, so without it a request can be routed to
+ * one that silently ignores the schema.
+ */
+async function callOpenRouter(signature: string, apiKey: string): Promise<ExtractedPayload> {
+  const model = process.env.OPENROUTER_MODEL ?? 'deepseek/deepseek-v4-flash-0731';
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${apiKey}`,
+  };
+  // Optional attribution, shown on OpenRouter's dashboard and rankings.
+  if (process.env.OPENROUTER_SITE_URL) headers['HTTP-Referer'] = process.env.OPENROUTER_SITE_URL;
+  if (process.env.OPENROUTER_APP_NAME) headers['X-Title'] = process.env.OPENROUTER_APP_NAME;
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_tokens: 700,
+      response_format: { type: 'json_schema', json_schema: RESPONSE_SCHEMA },
+      provider: { require_parameters: true },
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Email signature:\n\n${signature}` },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenRouter API error ${response.status}: ${await response.text()}`);
+  }
+
+  const body = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    error?: { message?: string };
+  };
+  if (body.error?.message) throw new Error(`OpenRouter error: ${body.error.message}`);
+
+  const text = body.choices?.[0]?.message?.content ?? '';
+  const { fields, confidence } = coerceFields(extractJson(text));
+  return { fields, confidence, model };
+}
+
 async function callAnthropic(signature: string, apiKey: string): Promise<ExtractedPayload> {
   const model = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -238,14 +306,15 @@ export default async (request: Request, context: Context): Promise<Response> => 
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
 
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  if (!anthropicKey && !openaiKey) {
+  if (!openrouterKey && !anthropicKey && !openaiKey) {
     // 501 is the signal the client uses to fall back to heuristics silently.
     return json(
       {
         error: 'No model API key is configured on this deployment.',
-        hint: 'Set ANTHROPIC_API_KEY or OPENAI_API_KEY in the Netlify site environment.',
+        hint: 'Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY in the Netlify site environment.',
       },
       501,
     );
@@ -276,9 +345,16 @@ export default async (request: Request, context: Context): Promise<Response> => 
 
   const started = Date.now();
   try {
-    const result = anthropicKey
-      ? await callAnthropic(signature, anthropicKey)
-      : await callOpenAI(signature, openaiKey as string);
+    // First key present wins, so switching provider is a matter of which
+    // variable is set rather than a code change.
+    let result: ExtractedPayload;
+    if (openrouterKey) {
+      result = await callOpenRouter(signature, openrouterKey);
+    } else if (anthropicKey) {
+      result = await callAnthropic(signature, anthropicKey);
+    } else {
+      result = await callOpenAI(signature, openaiKey as string);
+    }
 
     return json({
       fields: result.fields,
