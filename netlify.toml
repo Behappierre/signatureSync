@@ -9,15 +9,14 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
-# The extract endpoint. Declared here as well as in the function's own
-# config so it resolves identically under `netlify dev` and in production.
-[[redirects]]
-  from = "/api/extract"
-  to = "/.netlify/functions/extract"
-  status = 200
-  force = true
+# Do not add a redirect for /api/extract here. The function declares that path
+# itself (`export const config = { path: "/api/extract" }`), and a forced
+# redirect overrides the function's own route, rewriting the request to
+# /.netlify/functions/extract, which a v2 function with a custom path does not
+# answer on. The result is a 404 on an endpoint that deployed perfectly well.
 
-# SPA fallback. Must stay last so it never shadows the API route.
+# SPA fallback. Function routes are matched before redirects, so this does not
+# shadow /api/extract.
 [[redirects]]
   from = "/*"
   to = "/index.html"
@@ -30,3 +29,8 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(), microphone=(), camera=()"
+    # Google Identity Services signs in through a popup and polls window.closed
+    # on it. Under the default same-origin COOP that call is blocked and the
+    # sign-in hangs with "Cross-Origin-Opener-Policy policy would block the
+    # window.closed call" in the console. This is the value Google requires.
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
