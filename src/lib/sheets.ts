@@ -89,10 +89,10 @@ async function call<T>(
       throw new SheetsError('Your Google session has expired. Reconnect and try again.', 401);
     }
     if (response.status === 403) {
-      throw new SheetsError(
-        'This app does not have access to that spreadsheet. Choose it again from Drive to grant access.',
-        403,
-      );
+      // Google's own message distinguishes the three causes that look alike
+      // from here: a disabled API, an insufficient scope, and a file this app
+      // was never granted. Passing it through beats guessing at one of them.
+      throw new SheetsError(detail, 403);
     }
     if (response.status === 404) {
       throw new SheetsError('That spreadsheet no longer exists.', 404);
