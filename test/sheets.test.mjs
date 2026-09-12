@@ -77,3 +77,19 @@ test('column letters are correct past the 26th column', () => {
 test('tab names containing an apostrophe are escaped for A1 notation', () => {
   assert.equal(__testing.quoteTab("Olivier's contacts"), "'Olivier''s contacts'");
 });
+
+test('a leading plus is escaped so a phone number is not evaluated as a formula', () => {
+  const { guardFormula } = __testing;
+  assert.equal(guardFormula('+44 7700 900123'), "'+44 7700 900123");
+  assert.equal(guardFormula('=SUM(A1:A2)'), "'=SUM(A1:A2)");
+  assert.equal(guardFormula('-5'), "'-5");
+  assert.equal(guardFormula('@handle'), "'@handle");
+});
+
+test('ordinary values are written through untouched', () => {
+  const { guardFormula } = __testing;
+  assert.equal(guardFormula('Olivier'), 'Olivier');
+  assert.equal(guardFormula('https://www.netcompany.com'), 'https://www.netcompany.com');
+  assert.equal(guardFormula('020 7946 0000'), '020 7946 0000');
+  assert.equal(guardFormula(''), '');
+});
